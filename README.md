@@ -1,2 +1,5 @@
-# chronicling-hoosier
-My work on the Chronicling Hoosier project (http://centerfordigschol.github.io/chroniclinghoosier/).
+# Chronicling Hoosier
+Project homepage: http://centerfordigschol.github.io/chroniclinghoosier/
+
+## My Work
+documentation.Rmd - project documentation for all analysis and visualizations done in R.
