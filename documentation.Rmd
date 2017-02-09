@@ -1,0 +1,390 @@
+---
+title: "Chronicling Hoosier Documentation"
+output:
+  html_document:
+    toc: TRUE
+---
+## Preprocessing
+
+The API pulls resulted in 176 text files in JSON format. The file extensions were changed from *.txt* to *.json*. Each file was opened in Oxygen XML editor and the header was removed. This header contains metadata about the API pulls and is not necessary for the analysis. Next, each file was validated using Oxygen's built-in JSON validation. The files were then ready for reading into R for analysis.
+
+## Hoosier By Year Maps
+
+These [maps](http://centerfordigschol.github.io/chroniclinghoosier/map2.html) visually demonstrate the geographic distribution of the term *Hoosier* in the Chronicling America data set, shown by the number of times the term appears on a newspaper page. Each point on the map shows a unique place of publication where a newspaper, or newspapers, contain the term. The points are colored on a scale that is based on the number of pages containing *Hoosier* in each location. The darker blue the dot appears, the more occurrences of the term in this location. Ultimately this gives the viewer some sense of regions where the term appears more frequently.
+
+A series of packages is needed for this analysis.
+```{r eval=FALSE}
+install.packages("dplyr")
+install.packages("ggmap")
+install.packages("ggplot2")
+install.packages("jsonlite")
+install.packages("maptools")
+install.packages("plyr")
+install.packages("rgdal")
+install.packages("scales")
+```
+
+Load multiple packages at once by creating a vector of package names and using the `lapply` function.
+```{r eval=FALSE}
+x <- c("ggplot2", "rgdal", "scales", "ggmap","plyr", "dplyr", "maptools", "jsonlite")
+lapply(x, require, character.only = TRUE)
+```
+
+Set the working directory to the location where the data files are saved.
+```{r eval=FALSE}
+setwd("c:/Users/dapolley/Desktop/chronam/data/hoosier")
+```
+
+Load the JSON files by creating a list of files in the current working directory and use the `do.call()` function to read the JSON files and combine them into one data frame. The variable name **data** is assigned to this data frame. Since there are many JSON files, this step takes some time.
+```{r eval=FALSE}
+list <- list.files()
+data <- do.call(rbind.fill,lapply(list,fromJSON))
+```
+
+The resulting data frame has 31 variables and 59933 observations. Use the `names()` function to see the variables contained in the data frame. These variables correspond to the metadata elements in Chronicling America. This analysis focuses on the **place_of_publication** variable. Using **place_of_publication** is preferable to other geographic identifiers because of the higher level of precision offered over other variables such as **state** or **county**.
+
+Records with an *NA* value for **place_of_publication** are removed from the data frame using the `subset()` function.
+
+```{r eval=FALSE}
+data  <- subset(data, place_of_publication != "NA")
+```
+
+This results in a data frame with 59851 observations. Now, reduce the data frame by assigning the variables of interest to new vectors and combining them into a new data frame. Notice, the date is converted from MM-DD-YYYY format to simply YYYY.
+
+```{r eval=FALSE}
+id <- data$id
+place_of_publication <- data$place_of_publication
+date <- strtoi(substr(data$date,1, nchar(data$date)-4))
+data <- data.frame(id,place_of_publication,date)
+```
+
+Write the data frame to a CSV file to normalize the **place_of_publication** values in OpenRefine. After each major data transformation, it is generally a good idea to create a new file documenting the changes to the data.
+```{r eval=FALSE}
+write.csv(data, "C:/Users/dapolley/Desktop/chronam/data/data.csv", row.names = FALSE)
+```
+
+OpenRefine (http://openrefine.org/) is a useful tool for cleaning and transforming messy data. In this case, it is used to normalize **place_of_publcation** values that are inconsistent throughout the data. For example, Cincinnati, Ohio is listed several different ways: *[Cincinnati, Oh]*, *Cincinnati, Ohio*, and *Cincinnati, OH*. Use the Text Facet feature in OpenRefine to ensure that all the **place_of_publication** values are consistent.
+
+Load the file with normalized **place_of_publication** names back into R, assigning the variable name **data_clean** to the new data frame. 
+```{r eval=FALSE}
+data_clean <- read.csv("C:/Users/dapolley/Desktop/chronam/data/data-clean.csv", header = TRUE)
+```
+
+Identify only the unique values for **place_of_publication** to avoid geocoding duplicate locations, saving time and processing. Assign the variable name **unique_place_pub** to the unique values.
+```{r eval=FALSE}
+unique_place_pub <- as.character(unique(data_clean$place_of_publication))
+```
+
+Geocode the unique locations using the `geocode()` function. This step takes a few minutes.
+```{r eval=FALSE}
+geocoded_place  <- geocode(unique_place_pub, output = "latlon", source = "google")
+```
+
+The result is a data frame with two variables: **lon** and **lat**. In order to join these longitude and latitude values with the location names, the **unique_place_pub** vector is converted into a data frame.
+```{r eval=FALSE}
+unique_place_pub <- data.frame(unique_place_pub)
+```
+
+Combine the **unique_place_pub** data frame with the  **geocoded_place** data frame, joining the appropriate longitude and latitude values with their place names.
+```{r eval=FALSE}
+data_unique_geocoded <- cbind(unique_place_pub, geocoded_place)
+```
+
+Rename the columns so that the **place_of_publication** variable name matches variable name in the full data set (**data_clean**). This step makes joining the two data frames easier.
+```{r eval=FALSE}
+colnames(data_unique_geocoded) <- c("place_of_publication", "long", "lat")
+```
+
+Join **data_unique_geocoded** with **data_clean**, resulting in a data frame with five variables: **id**, **place_of_publication**, **date**, **long**, and **lat**. Assign the variable name **data_full_geocoded** to this new data frame.
+```{r eval=FALSE}
+data_full_geocoded <- left_join(data_clean,data_unique_geocoded)
+```
+
+Split **data_full_geocoded** into 87 data frames that contain cumulative values for the number of occurrences of *Hoosier* in each location and save them to a list (**years.l**):
+
+```{r eval=FALSE}
+years.v <- c(1836:1923)
+years.v <- paste("df.", years.v, sep = "")
+years.l <- list()
+for (i in 1:length(years.v)){
+  if (i != length(years.v)){
+    df <- data_full_geocoded[data_full_geocoded$date <= years.v[i], ]
+    count <- count(df, place_of_publication)
+    df <- left_join(df, count)
+    df <- df[!duplicated(df$place_of_publication), ]
+    years.l[[i]] <- data.frame(df)
+  }
+}
+```
+
+Ulist the dataframes and save them as variables in the global evnironment, allowing mapping of individual data frames:
+```{r eval= FALSE}
+list2env(years.l ,.GlobalEnv)
+```
+
+
+In order to create the maps, a shapefile of the United States is needed. This particular shapefile is obtained from [*National Historic Geographic Information System*](https://www.nhgis.org/documentation/gis-data).
+
+Once downloaded, read the shapefile into R and assign the variable name **us** to it. Use the directory path to the folder where shapefile and its associated files are saved. After the *layer* argument, enter the shapefile name without the *.shp* extension.
+```{r eval=FALSE}
+us  <- readOGR(dsn = "C:/Users/dapolley/Desktop/chronam/shapefiles/nhgis0002_shapefile_tl2010_us_state_2010", layer = "US_state_2010")
+```
+
+Next, change the Coordinate Reference System of the shapefile to a long-lat system and write a new shapefile. This is an important step, as it allows data with long-lat reference points to overlay accurately on the map. For more information on which Coordinate Reference System is best for a particular map, see http://spatialreference.org/. This step results in warnings printed to the console. These warnings can be ignored.
+
+```{r eval=FALSE}
+proj4string(us)
+us_epsg4326 <- spTransform(us, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+proj4string(us_epsg4326)
+writeOGR(us_epsg4326, dsn = "C:/Users/dapolley/Desktop/chronam/shapefiles/nhgis0002_shapefile_tl2010_us_state_2010", layer = "us_epsg4326", driver = "ESRI Shapefile")
+```
+
+After changing the Cooridnate Reference System, the shapefile is simplified using mapshaper (http://www.mapshaper.org/). Shapefiles from National Historic Geographic Information System come in a higher resolution than is needed for this analysis.
+
+Using the web interface of mapshaper, upload the new shapefile (.shp) and its associated database file (.dbf) at the same time. Simply drag and drop both files into the interface. Then choose simplify and check the *prevent shape removal* and *use planar geometry* boxes. Use the default method and click apply. With the slider at the top of the map, simplify the file to 0.05% of the original. Finally, export the shapefile. For more informaiton on mapshaper, see https://github.com/mbloch/mapshaper.
+
+Read the simplified shapefile back into R:
+```{r eval=FALSE}
+us_epsg4326  <- readOGR(dsn = "C:/Users/dapolley/Desktop/chronam/shapefiles/us_epsg4326", layer = "us_epsg4326")
+```
+
+Create a base map and overlay the data using the `ggplot2` package:
+```{r eval=FALSE}
+ggplot()+
+  geom_polygon(data = us_epsg4326, aes(x = long, y = lat, group = group), fill = "#dddddd", color = "white", size = 0.5)+
+  coord_map("albers", lat0=30, lat1=40)+
+  xlim(-170,-60)+
+  ylim(15,75)+
+  geom_point(data = df.1910, aes(x = long, y = lat, color = n), size = 0.25, alpha = .7)+
+  scale_color_gradient(limits = c(1,5443), low= "#9ecae1", high= "#084594", trans = "sqrt")+
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        rect = element_blank())
+```
+
+## Hoosier Choropleth Map
+
+In the [*Hoosier By Year*](http://centerfordigschol.github.io/chroniclinghoosier/map2.html) maps it is difficult to determine whether a particular place of publication actually has a higher occurrence of the term *Hoosier*, or whether these locations happen to have more records in the Chronicling America data set. This makes direct comparisons between states difficult. In attempt to address this issue, a map showing the percentage of newspaper pages that contain the word *Hoosier* relative to the total number of newspaper pages for each state is needed. The [*Hoosier Choropleth map*](http://centerfordigschol.github.io/chroniclinghoosier/map1.html) shows the states with a higher occurrence of the term in their newspapers and allows for direct comparisons between the states. As expected, Indiana has the highest percentage of pages containing the term Hoosier, followed by Arkansas, Kentucky, Iowa, Minnesota, and Connecticut.
+
+If not already installed, download the necessary packages.
+```{r eval=FALSE}
+install.packages("dplyr")
+install.packages("ggmap")
+install.packages("ggplot2")
+install.packages("jsonlite")
+install.packages("maptools")
+install.packages("plyr")
+install.packages("rgdal")
+install.packages("scales")
+```
+
+Load multiple packages at once by creating a vector of package names and using the `lapply` function.
+```{r eval=FALSE}
+x <- c("ggplot2", "rgdal", "scales", "ggmap","plyr", "dplyr", "maptools", "jsonlite")
+lapply(x, require, character.only = TRUE)
+```
+
+Set the working directory to the location where the data files are saved.
+```{r eval=FALSE}
+setwd("c:/Users/dapolley/Desktop/chronam/data/hoosier")
+```
+
+Load the shapefile used in the *Hoosier By Year* maps.
+```{r eval=FALSE}
+```{r eval=FALSE}
+us  <- readOGR(dsn = "C:/Users/dapolley/Desktop/chronam/shapefiles/us_epsg4326", layer = "us_epsg4326")
+```
+
+Fortify the shapefile based on the state abbreviations. This step makes creating choropleth maps with the `ggplot2` package easier.
+```{r eval=FALSE}
+us  <- fortify(us, region = "STUSPS10")
+```
+
+Remove Alaska and Puerto Rico because there is no data for these states.
+```{r eval=FALSE}
+us <- subset(us, id != "AK" & id != "PR")
+```
+
+Read in the data file and convert the **id** variable to character. This map relies on a simple spreadsheet, created by hand, that lists total number of pages for each state in Chronicling America and the total number of pages containing the word *Hoosier*. From this information the percent of pages containing the term is calculated for each state. These totals were sampled on May 20, 2016 and may not accurately reflect the current data in Chronicling America.
+
+Read CSV file containing totals and calcuated percentages:
+```{r eval=FALSE}
+data <- read.csv("C:/Users/dapolley/Desktop/chronam/data/state-hoosier-percent.csv", header = TRUE, na.strings = "NA")
+```
+
+Join **data** and **us** by id.
+```{r eval=FALSE}
+plot_data <- left_join(us,data)
+```
+
+Create a choropleth map based on the percent of total pages for each state that contain the term *Hoosier* using the `ggplot2` package.
+```{r eval=FALSE}
+ggplot()+
+  geom_polygon(data = plot_data, aes(x = long, y = lat, group = group, fill = percent), color = "white", size = 0.25)+
+  scale_fill_gradient(low= "#eff3ff", high= "#2171b5", trans = "sqrt")+
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+       axis.text = element_blank(),
+      rect = element_blank())+
+labs(fill = "Percent of total pages\ncontaining the word 'Hoosier'")
+```
+
+## Word Clouds by Decade
+
+The [*Word Clouds by Decade*](http://centerfordigschol.github.io/chroniclinghoosier/wordcloud.html) visualization is created by looking at the word Hoosier in context. The text immediately surrounding each appearance of the word is extracted, and from this the most frequently occurring terms are plotted. The larger a term appears in the word cloud, the more often it appears in proximity to Hoosier. Obviously, the word Indiana and state appear frequently in this context, but those familiar with Indiana history will recognize other relevant terms, such as cabinet, which appears prominently due to the prevalence of ads for Hoosier Cabinets.
+
+Working with the large amounts of text in this analysis requires more computing power than is available on most desktop machines. This analysis relies on an instance of R that sits on Karst, a high-throughput computing cluster available to faculty and graduate students at Indiana University. For more information on Karst, see https://kb.iu.edu/d/bezu. 
+
+Install the necessary packages.
+```{r eval=FALSE}
+install.packages("dplyr")
+install.packages("jsonlite")
+install.packages("plyr")
+install.packages("quanteda")
+install.packages("RColorBewer")
+install.packages("SnowballC")
+install.packages("tm")
+install.packages("wordcloud")
+```
+
+Load multiple packages at once by creating a vector of package names and using the `lapply` function.
+```{r eval=FALSE}
+x <- c("plyr", "dplyr", "jsonlite", "tm", "quanteda", "wordcloud", "SnowballC", "RColorBewer")
+lapply(x, require, character.only = TRUE)
+```
+
+Set the working directory to the location where the data files are saved.
+```{r eval=FALSE}
+setwd("~/R/data")
+```
+
+Load the JSON files by creating a list of files in the current working directory and use the `do.call()` function to read the JSON files and combine them into one data frame. The data frame is assigned to the variable **data**. Since there are many JSON files, this step takes a minute.
+```{r eval=FALSE}
+list <- list.files()
+data <- do.call(rbind.fill,lapply(list,fromJSON))
+```
+
+Remove any duplicate records.
+```{r eval=FALSE}
+data <- data[!duplicated(data$id), ]
+```
+
+Change the date format from MM-DD-YYY to YYYY.
+```{r eval=FALSE}
+data[,"date"] <- strtoi(substr(data$date,1, nchar(data$date)-4))
+```
+
+Reduce the data frame to only the variables of interest: **id**, **data**, and **ocr_eng** (the variable that contains the page text).
+```{r eval=FALSE}
+data <- data[,c(8,23)]
+```
+
+Now, split the text into data frames by the decade in which the records appear. This process is repeated 10 times, resulting in separate data frames for 1836-1839, 1840-1849, 1850-1859, 1860-1869, 1870-1879, 1880-1889, 1890-1899, 1900-1910, 1910-1920, and 1920-1922. Below is an example for 1836-1839.
+
+```{r eval=FALSE}
+text1830 <- data$ocr_eng[which(data$date > 1830 & data$date < 1840)]
+```
+
+Normalize the text, making all characters lowercase, removing punctuation and numbers, and removing stop-words. The orphan letters "b", "f", "n", "r", and "t" are leftover from special characters in the JSON files and are removed.
+
+```{r eval=FALSE}
+text1830 <- toLower(text1830)
+text1830 <- tokenize(text1830, removePunct = TRUE, removeNumbers = TRUE)
+text1830 <- removeFeatures(text1830, c(stopwords("english"), "b", "f", "n", "r", "t"))
+```
+
+Perform the keyword-in-context analysis, finding the 10 words that appear before and after each occurrence of the term *Hoosier*. Write the keyword-in-context data frame to a CSV file. While words that appear within 10 words of a specific term may not apply directly to that term, this is the best way to identify some of the context surrounding the word *Hoosier*.
+
+```{r eval=FALSE}
+text1830 <- kwic(text1830, "hoosier", window = 10, valuetype = "regex")
+write.csv(text1830, "C:/Users/dapolley/Desktop/chronam/data/hoosier_kwic/text1830.csv", row.names = FALSE)
+```
+
+The keyword-in-context CSV file has some leading and trailing white-space around the context words. This white-space is trimmed in Excel and the CSV file is loaded back into R.
+```{r eval=FALSE}
+text1830 <- read.csv("C:/Users/dapolley/Desktop/chronam/data/hoosier_kwic/text1830.csv", header = TRUE, strip.white = TRUE)
+```
+
+Extract just the pre-context words and the post-context words and save them into a character vector **text1830**.
+```{r eval=FALSE}
+contextPre1830 <- as.character(text1830$contextPre)
+contextPost1830 <- as.character(text1830$contextPost)
+text1830 <- c(contextPre1830, contextPost1830)
+```
+
+Create a corpus from the context words vector.
+```{r eval=FALSE}
+text1830 <- Corpus(VectorSource(text1830))
+```
+
+Stem the words in the vector, making them singular and removing endings such as *ed* or *ing*.
+```{r eval=FALSE}
+text1830 <- tm_map(text1830, stemDocument)
+```
+
+Remove the word *Hoosier* from from the context words corpus.There are a few instances of the word *Hoosier* appearing within the context words and since the same context is applied to these occurrences of *Hoosier*, they can be removed without impacting the resulting visualization.
+```{r eval=FALSE}
+text1830 <- tm_map(text1830, removeWords, "hoosier")
+```
+
+Strip any white-space left as a result of stemming the corpus.
+```{r eval=FALSE}
+text1830 <- tm_map(text1830, stripWhitespace)
+```
+
+Save as plain text data. This step is important before generating word frequency tables.
+```{r eval=FALSE}
+text1830 <- tm_map(text1830, PlainTextDocument)
+```
+
+Create frequency table of words. The resulting table lists every word in the context corpus and how often it appears, showing which words appear most often in connection to the word *Hoosier*.
+```{r eval=FALSE}
+text1830 <- TermDocumentMatrix(text1830)
+text1830 <- as.matrix(text1830)
+text1830 <- sort(rowSums(text1830), decreasing = TRUE)
+text1830 <- data.frame(word = names(text1830), freq = text1830)
+```
+
+Finally, write the word-frequency table to a CSV file.
+```{r eval=FALSE}
+write.csv(text1830, "C:/Users/dapolley/Desktop/chronam/data/context_word_freq/1830_context_freq.csv", row.names = FALSE)
+```
+
+Create a word cloud from the word frequency tables of the context words surrounding the term *Hoosier*. The `set.seed()` function ensures that each time this word cloud is generated, words appear in the same place.
+
+```{r eval=FALSE}
+set.seed(100)
+wordcloud(freq1830$word,freq1830$freq, scale = c(3,.1), max.words = 100, min.freq = 1, colors = "#08519c")
+```
+
+## Packages Used
+
+D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf
+
+Erich Neuwirth (2014). RColorBrewer: ColorBrewer Palettes. R package version 1.1-2. https://CRAN.R-project.org/package=RColorBrewer
+
+H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2009.
+
+Hadley Wickham (2016). scales: Scale Functions for Visualization. R package version 0.4.0. https://CRAN.R-project.org/package=scales
+
+Hadley Wickham (2011). The Split-Apply-Combine Strategy for Data Analysis. Journal of Statistical Software, 40(1), 1-29. URL http://www.jstatsoft.org/v40/i01/.
+  
+Hadley Wickham and Romain Francois (2016). dplyr: A Grammar of Data Manipulation. R package version 0.5.0. https://CRAN.R-project.org/package=dplyr
+
+Ian Fellows (2014). wordcloud: Word Clouds. R package version 2.5. https://CRAN.R-project.org/package=wordcloud
+
+Ingo Feinerer and Kurt Hornik (2015). tm: Text Mining Package. R package version 0.6-2. https://CRAN.R-project.org/package=tm
+
+Jeroen Ooms (2014). The jsonlite Package: A Practical and Consistent Mapping Between JSON Data and R Objects. arXiv:1403.2805 [stat.CO] URL http://arxiv.org/abs/1403.2805.
+
+Kenneth Benoit and Paul Nulty (2016). quanteda: Quantitative Analysis of Textual Data. R package version 0.9.8. https://CRAN.R-project.org/package=quanteda
+
+Milan Bouchet-Valat (2014). SnowballC: Snowball stemmers based on the C libstemmer UTF-8 library. R package version 0.5.1. https://CRAN.R-project.org/package=SnowballC
+
+Roger Bivand and Nicholas Lewin-Koh (2016). maptools: Tools for Reading and Handling Spatial Objects. R package version 0.8-39. https://CRAN.R-project.org/package=maptools
+
+Roger Bivand, Tim Keitt and Barry Rowlingson (2016). rgdal: Bindings for the Geospatial Data Abstraction Library. R package version 1.1-10. https://CRAN.R-project.org/package=rgdal
+
+
+
