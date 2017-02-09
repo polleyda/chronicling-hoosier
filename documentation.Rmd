@@ -1,9 +1,3 @@
----
-title: "Chronicling Hoosier Documentation"
-output:
-  html_document:
-    toc: TRUE
----
 ## Preprocessing
 
 The API pulls resulted in 176 text files in JSON format. The file extensions were changed from *.txt* to *.json*. Each file was opened in Oxygen XML editor and the header was removed. This header contains metadata about the API pulls and is not necessary for the analysis. Next, each file was validated using Oxygen's built-in JSON validation. The files were then ready for reading into R for analysis.
