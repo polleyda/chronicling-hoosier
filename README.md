@@ -2,4 +2,4 @@
 Project homepage: http://centerfordigschol.github.io/chroniclinghoosier/
 
 ## My Work
-See documentation.Rmd - project documentation for all analysis and visualizations done in R.
+See [documentation.Rmd](https://github.com/polleyda/chronicling-hoosier/blob/master/documentation.Rmd) - project documentation for all analysis and visualizations done in R.
